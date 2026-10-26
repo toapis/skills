@@ -1,0 +1,11 @@
+{
+  "name": "toapis-skills",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test skills/toapis-media/scripts/toapis-files.test.mjs"
+  }
+}

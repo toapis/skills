@@ -1,0 +1,4 @@
+interface:
+  display_name: "ToAPIs Media"
+  short_description: "Generate images and videos with ToAPIs models"
+  default_prompt: "Use ToAPIs to generate an image of "
