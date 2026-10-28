@@ -80,10 +80,15 @@ export async function configureCodex({ site, locale, config = defaultConfigPath(
   if (!url) throw new SetupError('invalid_args', `site must be com or cn, got ${site}`);
   if (locale !== undefined && !LOCALE_PATTERN.test(locale)) throw new SetupError('invalid_args', `invalid locale: ${locale}`);
 
+  // Follow a symlinked config (for example into a dotfiles repo) and keep the link itself intact.
+  let target = config;
+  let mode = 0o600;
   let original = '';
   let exists = true;
   try {
-    original = await fs.readFile(config, 'utf8');
+    target = await fs.realpath(config);
+    mode = (await fs.stat(target)).mode & 0o777;
+    original = await fs.readFile(target, 'utf8');
   } catch (error) {
     if (error.code !== 'ENOENT') throw new SetupError('read_failed', `cannot read ${config}: ${error.message}`);
     exists = false;
@@ -108,15 +113,17 @@ export async function configureCodex({ site, locale, config = defaultConfigPath(
 
   let backup;
   if (exists) {
-    backup = `${config}.toapis-backup-${utcStamp(now())}`;
-    await fs.copyFile(config, backup);
+    backup = `${target}.toapis-backup-${utcStamp(now())}`;
+    await fs.copyFile(target, backup);
   } else {
-    await fs.mkdir(path.dirname(config), { recursive: true });
+    await fs.mkdir(path.dirname(target), { recursive: true });
   }
   // Write to a temporary file and rename, so an interrupted write never leaves a half-written config.
-  const temp = `${config}.toapis-tmp-${process.pid}`;
-  await fs.writeFile(temp, text);
-  await fs.rename(temp, config);
+  // Keep the original permissions; a new config may hold tokens later, so it is readable only by the owner.
+  const temp = `${target}.toapis-tmp-${process.pid}`;
+  await fs.writeFile(temp, text, { mode });
+  await fs.chmod(temp, mode);
+  await fs.rename(temp, target);
   return { ok: true, action, backup, config };
 }
 

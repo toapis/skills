@@ -91,3 +91,20 @@ test('parses CLI arguments', () => {
   assert.deepEqual(parseArgs(['codex', '--site', 'cn', '--locale', 'ja', '--dry-run']), { command: 'codex', options: { site: 'cn', locale: 'ja', dryRun: true } });
   assert.throws(() => parseArgs(['codex', '--bogus']), { code: 'invalid_args' });
 });
+
+test('keeps the file mode and writes through a symlinked config', async () => {
+  const { dir, file } = await tempConfig(other);
+  await fs.chmod(file, 0o600);
+  const link = path.join(dir, 'link.toml');
+  await fs.symlink(file, link);
+  await configureCodex({ site: 'com', config: link, now: fixedNow });
+  assert.ok((await fs.lstat(link)).isSymbolicLink(), 'symlink must stay a symlink');
+  assert.ok((await fs.readFile(file, 'utf8')).includes('[mcp_servers.toapis]'));
+  assert.equal((await fs.stat(file)).mode & 0o777, 0o600);
+});
+
+test('creates a missing config readable only by the owner', async () => {
+  const { file } = await tempConfig();
+  await configureCodex({ site: 'com', config: file, now: fixedNow });
+  assert.equal((await fs.stat(file)).mode & 0o777, 0o600);
+});

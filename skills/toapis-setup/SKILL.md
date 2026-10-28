@@ -70,4 +70,4 @@ All are free and only cover the API key bound to this connection:
 - Codex: `codex mcp remove toapis`, or delete the `[mcp_servers.toapis]` section.
 - Claude Code: `claude mcp remove toapis --scope user`.
 - Claude desktop app: remove the ToAPIs connector in Settings.
-- On any client, the user can also disconnect in the ToAPIs console under Connected apps. A key created for that connection is then disabled.
+- On any client, the user can also disconnect in the ToAPIs console under Connected apps. A key created for that connection is then disabled, unless another connection still uses it.
