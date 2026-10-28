@@ -1,0 +1,4 @@
+interface:
+  display_name: "ToAPIs Setup"
+  short_description: "Connect your agent to ToAPIs and check credits, tasks and usage"
+  default_prompt: "Connect this agent to ToAPIs"

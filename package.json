@@ -6,6 +6,6 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test skills/toapis-media/scripts/toapis-files.test.mjs"
+    "test": "node --test skills/toapis-media/scripts/toapis-files.test.mjs skills/toapis-setup/scripts/toapis-setup.test.mjs"
   }
 }
