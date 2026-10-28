@@ -1,5 +1,7 @@
 # Connect the ToAPIs MCP server
 
+The recommended way is browser sign-in with the `toapis-setup` skill: no API key is copied into the client. The API key setup below remains available, for example for clients without OAuth support.
+
 The server is a remote MCP server over Streamable HTTP, authenticated with a ToAPIs API key:
 
 - International: `https://api.toapis.com/mcp`
