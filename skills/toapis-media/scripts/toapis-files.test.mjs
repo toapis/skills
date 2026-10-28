@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
 
-import { download, upload } from './toapis-files.mjs';
+import { download, parseArgs, upload } from './toapis-files.mjs';
 
 const anyScheme = () => true;
 let server;
@@ -103,4 +103,24 @@ test('download leaves no partial file on failure', async () => {
 test('download enforces redirect limit', async () => {
   const root = await tempDir();
   await assert.rejects(download({ url: `${base}/loop0`, out: path.join(root, 'r.bin'), root, isSecure: anyScheme }), { code: 'too_many_redirects' });
+});
+
+test('upload sends X-Locale only when a locale is given', async () => {
+  const dir = await tempDir();
+  const file = path.join(dir, 'pic.png');
+  await fs.writeFile(file, 'png');
+  await upload({ url: `${base}/v1/agent/uploads/t2`, file, locale: 'zh-TW', allowHosts: ['127.0.0.1'], isSecure: anyScheme });
+  assert.equal(received.headers['x-locale'], 'zh-TW');
+  await upload({ url: `${base}/v1/agent/uploads/t3`, file, allowHosts: ['127.0.0.1'], isSecure: anyScheme });
+  assert.equal(received.headers['x-locale'], undefined);
+});
+
+test('upload rejects a malformed locale before sending', async () => {
+  received = undefined;
+  await assert.rejects(upload({ url: `${base}/v1/agent/uploads/t4`, file: 'package.json', locale: 'zh\r\nX-Evil: 1', allowHosts: ['127.0.0.1'], isSecure: anyScheme }), { code: 'invalid_args' });
+  assert.equal(received, undefined);
+});
+
+test('parseArgs accepts --locale', () => {
+  assert.deepEqual(parseArgs(['upload', '--url', 'u', '--file', 'f', '--locale', 'ja']), { command: 'upload', options: { url: 'u', file: 'f', locale: 'ja' } });
 });

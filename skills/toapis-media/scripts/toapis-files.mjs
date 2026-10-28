@@ -2,7 +2,7 @@
 // Upload local files to a ToAPIs one-time upload URL and download generated results.
 // No dependencies, Node 20+. Never reads environment variables or API keys.
 //
-//   node toapis-files.mjs upload --url <upload_url> --file <path>
+//   node toapis-files.mjs upload --url <upload_url> --file <path> [--locale <code>]
 //   node toapis-files.mjs download --url <url> --out <path> [--overwrite] [--root <dir>]
 //
 // Prints one JSON line to stdout: {"ok":true,...} or {"ok":false,"error":"<code>","message":"..."}.
@@ -18,6 +18,8 @@ import { pathToFileURL } from 'node:url';
 const UPLOAD_HOSTS = ['api.toapis.com', 'toapis.com', 'api.toapis.cn', 'toapis.cn'];
 const MAX_REDIRECTS = 5;
 const MAX_DOWNLOAD_BYTES = 2 * 1024 ** 3;
+// Language codes such as en, zh, zh-TW, ja, ko or ru; sent as X-Locale so server messages match the conversation.
+const LOCALE_PATTERN = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$/;
 
 export class FilesError extends Error {
   constructor(code, message) {
@@ -38,9 +40,11 @@ function parseURL(raw) {
 
 /**
  * Upload one file as multipart field "file". Only ToAPIs hosts are allowed.
+ * locale, when given, is sent as X-Locale so error messages use the user's language.
  * allowHosts and isSecure exist for tests only.
  */
-export async function upload({ url, file, allowHosts = UPLOAD_HOSTS, isSecure = httpsOnly }) {
+export async function upload({ url, file, locale, allowHosts = UPLOAD_HOSTS, isSecure = httpsOnly }) {
+  if (locale !== undefined && !LOCALE_PATTERN.test(locale)) throw new FilesError('invalid_args', `invalid locale: ${locale}`);
   const target = parseURL(url);
   if (!isSecure(target)) throw new FilesError('https_required', 'upload URL must use https');
   if (!allowHosts.includes(target.hostname)) throw new FilesError('host_not_allowed', `upload host ${target.hostname} is not a ToAPIs host`);
@@ -55,7 +59,8 @@ export async function upload({ url, file, allowHosts = UPLOAD_HOSTS, isSecure = 
   let response;
   let body;
   try {
-    response = await fetch(target, { method: 'POST', body: form, redirect: 'error' });
+    const headers = locale ? { 'X-Locale': locale } : {};
+    response = await fetch(target, { method: 'POST', body: form, headers, redirect: 'error' });
     body = await response.json();
   } catch (error) {
     throw new FilesError('upload_failed', error instanceof Error ? error.message : String(error));
@@ -159,7 +164,7 @@ export function parseArgs(argv) {
     const name = rest[i];
     if (name === '--overwrite') {
       options.overwrite = true;
-    } else if (['--url', '--file', '--out', '--root'].includes(name) && i + 1 < rest.length) {
+    } else if (['--url', '--file', '--out', '--root', '--locale'].includes(name) && i + 1 < rest.length) {
       options[name.slice(2)] = rest[++i];
     } else {
       throw new FilesError('invalid_args', `unknown or incomplete argument: ${name}`);
@@ -175,12 +180,12 @@ async function main(argv) {
   const { command, options } = parseArgs(argv);
   if (command === 'upload' && options.url && options.file) {
     // No CLI flag widens the host allowlist, so injected instructions cannot send files elsewhere; tests inject allowHosts directly.
-    return upload({ url: options.url, file: options.file });
+    return upload({ url: options.url, file: options.file, locale: options.locale });
   }
   if (command === 'download' && options.url && options.out) {
     return download({ url: options.url, out: options.out, overwrite: options.overwrite, root: options.root });
   }
-  throw new FilesError('invalid_args', 'usage: upload --url <url> --file <path> | download --url <url> --out <path> [--overwrite] [--root <dir>]');
+  throw new FilesError('invalid_args', 'usage: upload --url <url> --file <path> [--locale <code>] | download --url <url> --out <path> [--overwrite] [--root <dir>]');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

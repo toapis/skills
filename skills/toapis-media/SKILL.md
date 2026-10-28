@@ -6,7 +6,7 @@ version: 0.1.0
 
 # ToAPIs Media
 
-Use the ToAPIs MCP tools to pick a model, read its parameters, upload local files, generate, follow up and deliver results. Always reply in the user's language.
+Use the ToAPIs MCP tools to pick a model, read its parameters, upload local files, generate, follow up and deliver results. Always reply in the user's language. Server messages follow the `X-Locale` header of the MCP connection (see `references/connect.md`); if one arrives in another language, translate it for the user.
 
 All business actions go through the MCP tools. The bundled script `scripts/toapis-files.mjs` only moves local files; it never needs an API key.
 
@@ -32,10 +32,10 @@ All business actions go through the MCP tools. The bundled script `scripts/toapi
 5. **Upload files.** Only for files the user explicitly provided. Call `create_upload` (optionally with `group_name`), then upload:
 
    ```bash
-   node scripts/toapis-files.mjs upload --url "<upload_url>" --file "<local file>"
+   node scripts/toapis-files.mjs upload --url "<upload_url>" --file "<local file>" --locale "<code>"
    ```
 
-   Use the returned `url` in `params`. Each `upload_url` works once; call `create_upload` again for each file. If an upload fails, stop and report it; do not submit a generation that depends on it.
+   Set `--locale` to the language of the conversation (`en`, `zh`, `zh-TW`, `ja`, `ko` or `ru`) so error messages match it; leave it out for other languages. Use the returned `url` in `params`. Each `upload_url` works once; call `create_upload` again for each file. If an upload fails, stop and report it; do not submit a generation that depends on it.
 6. **Submit once.** Submit only when the user asked to generate. If they asked clearly, do it without a second confirmation, but ask again before raising the count, duration or price beyond what they asked for.
    - Before each new generation, create a new `client_request_id` with a command and remember it. Do not invent the value yourself:
 
@@ -46,7 +46,8 @@ All business actions go through the MCP tools. The bundled script `scripts/toapi
    - Pass `model`, `params` and `client_request_id` as separate tool arguments. Do not put `model`, `stream` or `client_request_id` inside `params`.
    - Reuse the same `client_request_id` only when the tool call itself failed, timed out or its response was lost. Never switch to a new value for such a retry: that can charge twice.
    - If the generation finished with `state: failed` and the user wants to try again, use a new `client_request_id`.
-7. **Follow up.** While `state` is `running`, wait `poll_after_seconds` and call `get_generation`. Keep waiting up to about 5 minutes for images and 15 minutes for videos, then report the `client_request_id` and `task_id` so the user can check later. If `state` is `unknown`, tell the user the result could not be confirmed and suggest checking the console task list; do not resubmit.
+   - A result with `error` but no `state` means the tool call itself failed and did not produce a generation result. Follow `error.code`: fix the arguments for invalid input; for `client_request_id_conflict` use a new value; when `retry_after_seconds` is set, wait and retry with the same `client_request_id`.
+7. **Follow up.** While `state` is `running`, wait `poll_after_seconds` and call `get_generation`. Keep waiting up to about 5 minutes for images and 15 minutes for videos, then report the `client_request_id` and `task_id` so the user can check later. If `state` is `unknown`, tell the user the result could not be confirmed and suggest checking the console task list; do not resubmit. If `get_generation` returns `generation_not_found`, the record expired (after 24 hours) or the ID is wrong; tell the user and do not resubmit on your own.
 8. **Deliver.** Show the result URLs. If the user wants the files saved, download only the URLs returned for this generation:
 
    ```bash
