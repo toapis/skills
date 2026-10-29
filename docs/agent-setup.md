@@ -19,6 +19,13 @@ Ask only what you cannot tell:
 - **Language**: the conversation language as `en`, `zh`, `zh-TW`, `ja`, `ko` or `ru`. The server then answers in that language. Leave it out for other languages.
 - **System**: Windows, or macOS and Linux. The commands differ below.
 
+### Check your permissions first
+
+Installing writes outside your workspace: into the user skills directory and the client config. Look at the sandbox and approval settings your client reports to you.
+
+- **Codex**: unless the sandbox is full access (`danger-full-access`), these writes need approval. In the default "Approve for me" mode an automatic reviewer refuses them, so before step 2 tell the user and offer the two options in "If writing or network access is blocked": switch this chat to Full access, or run one command themselves. Continue only after they switched, or stop after giving them the command. In "Ask for approval" mode, go on: the user approves each write when asked.
+- **Claude Code**: it asks the user to approve each command; that is enough.
+
 ## 2. Get the repository
 
 Clone the official repository into your workspace or a temporary directory:
@@ -59,8 +66,21 @@ Then run the same command without `--dry-run` (`-DryRun`).
 
 The skills directory and the client config are outside your workspace. Sandboxed clients, such as Codex, need the user's approval to write there, and often to use the network for `git clone`; some approval settings refuse it automatically. If the clone, the download or the script is refused, or your request for approval is refused, stop and give the user two options:
 
-1. Allow it: change the permission or approval setting of this chat so you may use the network and write outside the workspace, then ask you to continue.
-2. Run it themselves: open a terminal (PowerShell on Windows), clone the repository if needed, and run the install command above with the absolute `<repo>` path filled in and without `--dry-run`. Show the exact commands.
+1. **Allow it.** In Codex, switch this chat's permission mode to Full access, then reply "continue"; switch it back after the setup. In other clients, change the permission or approval setting of this chat so you may use the network and write outside the workspace.
+2. **Run one command themselves.** It downloads the repository and runs the same install script, so no clone is needed. Fill in the client, site and language, and show the exact command:
+   - macOS and Linux (Terminal):
+
+     ```bash
+     curl -fsSL https://raw.githubusercontent.com/toapis/skills/main/scripts/install.sh | bash -s -- --client codex --site com --locale zh
+     ```
+
+   - Windows (PowerShell):
+
+     ```powershell
+     & ([scriptblock]::Create((irm https://raw.githubusercontent.com/toapis/skills/main/scripts/install.ps1))) -Client codex -Site com -Locale zh
+     ```
+
+   Then the user signs in as the command prints (step 4) and asks you, in a new session, to check the ToAPIs balance.
 
 ## 4. Sign in
 

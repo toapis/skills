@@ -51,22 +51,26 @@ async function sandbox({ withNode = true } = {}) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'toapis-install-'));
   const bin = path.join(home, 'bin');
   await fs.mkdir(bin);
+  const tmp = path.join(home, 'tmp');
+  await fs.mkdir(tmp);
   const log = path.join(home, 'claude.log');
   if (process.platform !== 'win32') {
     await fs.writeFile(
       path.join(bin, 'claude'),
       // Like the real CLI, a failed lookup writes to stderr (Windows PowerShell 5.1 turns that into an error record).
-      '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$FAKE_CLAUDE_LOG"\nif [ "$1 $2" = "mcp get" ]; then [ -n "$FAKE_CLAUDE_HAS_TOAPIS" ] && exit 0; echo \'No MCP server found with name: toapis\' >&2; exit 1; fi\nexit 0\n',
+      // It also reads stdin: under `curl | bash` that would swallow the rest of a script that is not wrapped in main().
+      '#!/bin/sh\ncat > /dev/null\nprintf \'%s\\n\' "$*" >> "$FAKE_CLAUDE_LOG"\nif [ "$1 $2" = "mcp get" ]; then [ -n "$FAKE_CLAUDE_HAS_TOAPIS" ] && exit 0; echo \'No MCP server found with name: toapis\' >&2; exit 1; fi\nexit 0\n',
       { mode: 0o755 },
     );
   }
   const searchPath = [bin, ...(withNode ? [nodeDir] : []), '/usr/bin', '/bin'].join(path.delimiter);
   // Keep only what the shells need; CODEX_HOME and the real HOME must not leak in, or the real config would be changed.
-  const env = { HOME: home, USERPROFILE: home, PATH: searchPath, FAKE_CLAUDE_LOG: log, TMPDIR: os.tmpdir() };
-  for (const name of ['SystemRoot', 'SystemDrive', 'WINDIR', 'TEMP', 'TMP', 'ComSpec', 'PATHEXT']) {
+  const env = { HOME: home, USERPROFILE: home, PATH: searchPath, FAKE_CLAUDE_LOG: log, TMPDIR: tmp };
+  for (const name of ['SystemRoot', 'SystemDrive', 'WINDIR', 'ComSpec', 'PATHEXT']) {
     if (process.env[name]) env[name] = process.env[name];
   }
-  return { home, log, env };
+  if (process.platform === 'win32') Object.assign(env, { TEMP: tmp, TMP: tmp });
+  return { home, log, env, tmp };
 }
 
 function run(shell, box, options, extraEnv = {}, args = shell.args(options)) {
@@ -127,6 +131,7 @@ for (const shell of shells) {
     const refused = run(shell, box, { client: 'codex', site: 'com' });
     assert.equal(refused.code, 1, refused.out);
     assert.match(refused.out, /already exists and differs/);
+    assert.doesNotMatch(refused.out, /Line \||CategoryInfo/, 'errors stay one readable line');
     assert.equal(await read(path.join(old, 'SKILL.md')), 'old\n');
     assert.equal(await exists(path.join(box.home, '.agents/skills/toapis-setup')), false);
     assert.equal(await exists(path.join(box.home, '.codex')), false);
@@ -230,3 +235,96 @@ for (const shell of shells.filter((s) => s.ps)) {
     assert.equal(await exists(path.join(otherHome, '.claude')), false);
   });
 }
+
+// Pack this working tree like a GitHub branch archive (top folder skills-main) for the one-line install cases.
+async function packRepo(kind, topName = 'skills-main') {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'toapis-archive-'));
+  const top = path.join(dir, topName);
+  const root = path.dirname(scripts);
+  await fs.cp(root, top, { recursive: true, filter: (src) => !['.git', '.codegraph', 'node_modules'].includes(path.basename(src)) });
+  const out = path.join(dir, kind === 'zip' ? 'main.zip' : 'main.tar.gz');
+  if (kind === 'zip') {
+    execFileSync(pwsh, ['-NoProfile', '-NonInteractive', '-Command', `Compress-Archive -Path '${top}' -DestinationPath '${out}'`]);
+  } else {
+    execFileSync('tar', ['-czf', out, '-C', dir, topName]);
+  }
+  return out;
+}
+
+const leftovers = async (box) => (await fs.readdir(box.tmp)).filter((n) => n.startsWith('toapis-skills'));
+
+function runPipe(box, archive, args) {
+  const result = spawnSync(bash, ['-s', '--', ...args], {
+    cwd: box.home,
+    input: execFileSync('cat', [path.join(scripts, 'install.sh')]),
+    env: { ...box.env, TOAPIS_SKILLS_ARCHIVE: archive },
+    encoding: 'utf8',
+  });
+  return { code: result.status, out: result.stdout + result.stderr };
+}
+
+test('install.sh: runs from a pipe (curl | bash -s --) by downloading the repository archive', { skip: !bash && 'bash is not available' }, async () => {
+  const box = await sandbox();
+  const archive = await packRepo('tar');
+  const result = runPipe(box, `file://${archive}`, ['--client', 'codex', '--site', 'com', '--locale', 'zh']);
+  assert.equal(result.code, 0, result.out);
+  assert.ok(await exists(path.join(box.home, '.agents/skills/toapis-media/SKILL.md')));
+  assert.match(await read(path.join(box.home, '.codex/config.toml')), /X-Locale" = "zh"/);
+  assert.deepEqual(await leftovers(box), []);
+});
+
+test('install.sh: from a pipe, a CLI that reads stdin does not cut the script short', { skip: !bash && 'bash is not available' }, async () => {
+  const box = await sandbox();
+  // A plain path, and an archive whose top folder is not skills-main (a mirror or another branch).
+  const archive = await packRepo('tar', 'skills-mirror');
+  const result = runPipe(box, archive, ['--client', 'claude-code', '--site', 'cn']);
+  assert.equal(result.code, 0, result.out);
+  assert.match(result.out, /Done\./);
+  assert.ok(await exists(path.join(box.home, '.claude/skills/toapis-setup/SKILL.md')));
+  assert.deepEqual(await claudeCalls(box), ['mcp get toapis', 'mcp add --transport http --scope user toapis https://api.toapis.cn/mcp']);
+  assert.deepEqual(await leftovers(box), []);
+});
+
+const psSkip = pwsh ? false : 'PowerShell 7 is not available';
+function runScriptBlock(box, archive, tail) {
+  // The form users paste: & ([scriptblock]::Create((irm <url>))) <args>; Get-Content stands in for irm.
+  const block = `$sb = [scriptblock]::Create((Get-Content -Raw -LiteralPath '${path.join(scripts, 'install.ps1')}')); ${tail}; 'still-here'`;
+  const result = spawnSync(pwsh, ['-NoProfile', '-NonInteractive', '-Command', block], {
+    cwd: box.home,
+    env: { ...box.env, TOAPIS_SKILLS_ARCHIVE: archive },
+    encoding: 'utf8',
+  });
+  return { code: result.status, out: result.stdout + result.stderr };
+}
+
+test('install.ps1: runs as a pasted script block by downloading the repository archive', { skip: psSkip }, async () => {
+  const box = await sandbox();
+  const archive = await packRepo('zip');
+  const result = runScriptBlock(box, archive, '& $sb -Client codex -Site com -Locale zh');
+  assert.equal(result.code, 0, result.out);
+  assert.ok(await exists(path.join(box.home, '.agents/skills/toapis-media/SKILL.md')));
+  assert.match(await read(path.join(box.home, '.codex/config.toml')), /X-Locale" = "zh"/);
+  assert.match(result.out, /still-here/);
+  assert.deepEqual(await leftovers(box), []);
+});
+
+test('install.ps1: as a pasted script block, a dry run or an error does not end the PowerShell session', { skip: psSkip }, async () => {
+  const box = await sandbox();
+  const archive = await packRepo('zip');
+  const dry = runScriptBlock(box, archive, '& $sb -Client codex -Site com -DryRun');
+  assert.match(dry.out, /dry run: nothing was changed[\s\S]*still-here/);
+  const failed = runScriptBlock(box, archive, "try { & $sb -Client codex -Site net } catch { 'caught: ' + $_ }");
+  assert.match(failed.out, /caught: [\s\S]*usage: install\.ps1[\s\S]*still-here/);
+  assert.equal(await exists(path.join(box.home, '.agents')), false);
+});
+
+test('install.ps1: as a pasted script block, a failure after the download still cleans up', { skip: psSkip }, async () => {
+  const box = await sandbox();
+  const archive = await packRepo('zip', 'skills-mirror');
+  const old = path.join(box.home, '.agents/skills/toapis-media');
+  await fs.mkdir(old, { recursive: true });
+  await fs.writeFile(path.join(old, 'SKILL.md'), 'old\n');
+  const failed = runScriptBlock(box, archive, "try { & $sb -Client codex -Site com } catch { 'caught: ' + $_ }");
+  assert.match(failed.out, /downloading[\s\S]*caught: error: [^\n]*already exists and differs[\s\S]*still-here/);
+  assert.deepEqual(await leftovers(box), []);
+});

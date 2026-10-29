@@ -15,7 +15,9 @@ Agent Skills for [ToAPIs](https://toapis.com): connect your agent to ToAPIs, the
 
 ## Quick start
 
-Paste this prompt into Codex or Claude Code. The agent follows [docs/agent-setup.md](docs/agent-setup.md): it installs both skills, adds the ToAPIs MCP server, and opens the browser for you to sign in. On the ToAPIs page you choose which API key the connection uses, or create a dedicated key with a spending limit.
+Paste this prompt into Codex or Claude Code. The agent follows [docs/agent-setup.md](docs/agent-setup.md): it installs both skills, adds the ToAPIs MCP server, and tells you how to sign in. On the ToAPIs page you choose which API key the connection uses, or create a dedicated key with a spending limit.
+
+**Codex:** switch this chat's permission mode to Full access before you paste the prompt, and switch it back after the setup. Otherwise Codex may not write outside its workspace, and the agent gives you a one-line command to run instead (see [Install manually](#install-manually)).
 
 ```text
 Read the official ToAPIs setup guide at https://raw.githubusercontent.com/toapis/skills/main/docs/agent-setup.md and follow its steps to connect this AI client to ToAPIs. Reply in English. Never ask me for my password, verification codes or API key, and tell me what you will change before you change any configuration.
@@ -23,6 +25,8 @@ Read the official ToAPIs setup guide at https://raw.githubusercontent.com/toapis
 
 <details>
 <summary>简体中文</summary>
+
+Codex 用户：粘贴前先把当前对话的权限模式切换为 Full access（完全访问），配置完成后再切回。
 
 ```text
 请阅读 ToAPIs 官方接入文档 https://raw.githubusercontent.com/toapis/skills/main/docs/agent-setup.md ，按其中的步骤把当前 AI 客户端接入 ToAPIs。全程用简体中文回复；不要向我索要密码、验证码或 API Key；修改任何配置前先告诉我要改什么。
@@ -33,6 +37,8 @@ Read the official ToAPIs setup guide at https://raw.githubusercontent.com/toapis
 <details>
 <summary>繁體中文</summary>
 
+Codex 使用者：貼上前先將目前對話的權限模式切換為 Full access（完全存取），設定完成後再切回。
+
 ```text
 請閱讀 ToAPIs 官方連接指南 https://raw.githubusercontent.com/toapis/skills/main/docs/agent-setup.md ，依照其中的步驟將目前的 AI 用戶端連接到 ToAPIs。全程使用繁體中文回覆；不要向我索取密碼、驗證碼或 API Key；修改任何設定前先告訴我要改什麼。
 ```
@@ -41,6 +47,8 @@ Read the official ToAPIs setup guide at https://raw.githubusercontent.com/toapis
 
 <details>
 <summary>日本語</summary>
+
+Codex をお使いの場合：貼り付ける前にこのチャットの権限モードを Full access に切り替え、設定が終わったら元に戻してください。
 
 ```text
 ToAPIs 公式の接続ガイド https://raw.githubusercontent.com/toapis/skills/main/docs/agent-setup.md を読み、その手順に従ってこの AI クライアントを ToAPIs に接続してください。返答はすべて日本語でお願いします。パスワード、認証コード、API キーは求めないでください。設定を変更する前に、何を変更するか説明してください。
@@ -51,6 +59,8 @@ ToAPIs 公式の接続ガイド https://raw.githubusercontent.com/toapis/skills/
 <details>
 <summary>한국어</summary>
 
+Codex 사용자: 붙여넣기 전에 현재 대화의 권한 모드를 Full access로 바꾸고, 설정이 끝나면 원래대로 되돌려 주세요.
+
 ```text
 ToAPIs 공식 연결 가이드를 읽고, 안내된 단계에 따라 이 AI 클라이언트를 ToAPIs에 연결해 주세요. 가이드 주소: https://raw.githubusercontent.com/toapis/skills/main/docs/agent-setup.md . 모든 답변은 한국어로 해 주세요. 비밀번호, 인증 코드, API 키는 요청하지 마세요. 설정을 변경하기 전에 무엇을 바꿀지 먼저 알려 주세요.
 ```
@@ -59,6 +69,8 @@ ToAPIs 공식 연결 가이드를 읽고, 안내된 단계에 따라 이 AI 클�
 
 <details>
 <summary>Русский</summary>
+
+Codex: перед вставкой переключите режим разрешений этого чата на Full access, а после настройки верните прежний.
 
 ```text
 Прочитай официальное руководство ToAPIs по подключению https://raw.githubusercontent.com/toapis/skills/main/docs/agent-setup.md и по его шагам подключи этот AI-клиент к ToAPIs. Отвечай на русском. Не спрашивай у меня пароль, коды подтверждения или API-ключ и перед любым изменением настроек сообщи, что именно изменишь.
@@ -74,19 +86,21 @@ Then try, in a new session:
 
 ## Install manually
 
-Clone this repository and run the install script. It previews with `--dry-run` (`-DryRun`), refuses to replace an existing ToAPIs skill or server unless you add `--force` (`-Force`), and backs up what it replaces.
+Run one command in a terminal. It downloads this repository to a temporary directory and runs the install script, which refuses to replace an existing ToAPIs skill or server unless you add `--force` (`-Force`) and backs up what it replaces.
 
 ```bash
-# macOS and Linux
-bash scripts/install.sh --client codex --site com --locale en
+# macOS and Linux (Terminal)
+curl -fsSL https://raw.githubusercontent.com/toapis/skills/main/scripts/install.sh | bash -s -- --client codex --site com --locale en
 ```
 
 ```powershell
-# Windows
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -Client codex -Site com -Locale en
+# Windows (PowerShell)
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/toapis/skills/main/scripts/install.ps1))) -Client codex -Site com -Locale en
 ```
 
-Use `--client claude-code` for Claude Code and `--site cn` for an account on toapis.cn. Then sign in as the script prints.
+Use `--client claude-code` (`-Client claude-code`) for Claude Code, `--site cn` (`-Site cn`) for an account on toapis.cn, and add `--dry-run` (`-DryRun`) to preview. Then sign in as the command prints.
+
+From a clone of this repository, run `bash scripts/install.sh ...` or `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 ...` with the same options.
 
 You can also install the skills only, with the [skills CLI](https://github.com/vercel-labs/skills) (`npx skills add toapis/skills -g`) or by copying the folders under [`skills/`](skills) into `~/.agents/skills/` (Codex) or `~/.claude/skills/` (Claude Code), and then ask your agent: "Connect this agent to ToAPIs".
 

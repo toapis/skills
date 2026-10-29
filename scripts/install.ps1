@@ -4,6 +4,13 @@
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -Client codex|claude-code -Site com|cn [-Locale <code>] [-DryRun] [-Force]
 #
+# Or without a clone, pasted into PowerShell; the repository archive is then downloaded to a temporary directory
+# (TOAPIS_SKILLS_ARCHIVE overrides its URL or local path, for mirrors and tests):
+#
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/toapis/skills/main/scripts/install.ps1))) -Client codex -Site com
+#
+# A pasted run never calls exit, which would close the user's PowerShell window: errors are thrown instead.
+#
 # Everything that can be checked is checked first: if a step would fail, or would replace an existing skill or ToAPIs
 # server without -Force, nothing is changed. If a write still fails midway, fix the cause and run it again; finished
 # steps then report unchanged. Replaced skills are moved to ~\.toapis-backup\<UTC time>\; the Codex config is backed
@@ -21,11 +28,11 @@ $ErrorActionPreference = 'Stop'
 
 $usage = 'usage: install.ps1 -Client codex|claude-code -Site com|cn [-Locale <code>] [-DryRun] [-Force]'
 function Fail([string]$Message) {
-  [Console]::Error.WriteLine("error: $Message")
-  exit 1
+  throw "error: $Message"
 }
 
-$repo = Split-Path -Parent $PSScriptRoot
+# $PSScriptRoot is empty when the script runs as a pasted script block.
+$repo = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { '' }
 # Codex, Claude Code and Node use USERPROFILE. Windows PowerShell 5.1 sets $HOME from HOMEDRIVE and HOMEPATH instead,
 # which domain setups often redirect to a network drive.
 $userHome = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
@@ -37,27 +44,21 @@ function Invoke-Native([scriptblock]$Command) {
   $ErrorActionPreference = 'Continue'
   try { & $Command } finally { $ErrorActionPreference = $saved }
 }
-switch -CaseSensitive ($Client) {
-  'codex' { $skillsDir = Join-Path $userHome '.agents/skills' }
-  'claude-code' { $skillsDir = Join-Path $userHome '.claude/skills' }
-  default { Fail $usage }
-}
-switch -CaseSensitive ($Site) {
-  'com' { $url = 'https://api.toapis.com/mcp' }
-  'cn' { $url = 'https://api.toapis.cn/mcp' }
-  default { Fail $usage }
-}
-if ($Locale -and $Locale -cnotmatch '^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$') { Fail "invalid locale: $Locale" }
-
-$stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMdd'T'HHmmss'Z'")
-$backupRoot = Join-Path $userHome ".toapis-backup/$stamp"
-
 # Relative path and SHA-256 of every file below Dir, sorted, so two copies of a skill can be compared.
 function Get-TreeDigest([string]$Dir) {
   $root = (Resolve-Path -LiteralPath $Dir).ProviderPath.TrimEnd('\', '/')
-  $lines = foreach ($file in Get-ChildItem -LiteralPath $root -Recurse -File -Force) {
-    $rel = $file.FullName.Substring($root.Length).TrimStart('\', '/').Replace('\', '/')
-    "$rel $((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash)"
+  # .NET instead of Get-FileHash: in Windows PowerShell 5.1 that cmdlet lives in a script module, which the default
+  # Restricted execution policy refuses to load when this script is pasted.
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try {
+    $lines = foreach ($file in Get-ChildItem -LiteralPath $root -Recurse -File -Force) {
+      $rel = $file.FullName.Substring($root.Length).TrimStart('\', '/').Replace('\', '/')
+      $stream = [IO.File]::OpenRead($file.FullName)
+      try { $hash = [BitConverter]::ToString($sha.ComputeHash($stream)) } finally { $stream.Dispose() }
+      "$rel $hash"
+    }
+  } finally {
+    $sha.Dispose()
   }
   (@($lines) | Sort-Object) -join "`n"
 }
@@ -70,108 +71,168 @@ function Invoke-CodexSetup([string[]]$Extra) {
   Write-Output $parsed
 }
 
-# 1. Check the skills.
-$skillActions = @()
-foreach ($name in @('toapis-setup', 'toapis-media')) {
-  $src = Join-Path $repo "skills/$name"
-  $dest = Join-Path $skillsDir $name
-  if (-not (Test-Path -LiteralPath (Join-Path $src 'SKILL.md'))) {
-    Fail "missing $src; run this script from a full copy of https://github.com/toapis/skills"
-  }
-  # Get-Item -Force also finds a broken link, which Test-Path reports inconsistently.
-  $existing = Get-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
-  if ($existing) {
-    $sameTree = (Test-Path -LiteralPath $dest -PathType Container) -and ((Get-TreeDigest $src) -eq (Get-TreeDigest $dest))
-    if ($sameTree) {
-      $action = 'unchanged'
-    } elseif ($Force) {
-      $action = 'replace'
+function Install-ToAPIs {
+  # 1. Check the skills.
+  $skillActions = @()
+  foreach ($name in @('toapis-setup', 'toapis-media')) {
+    $src = Join-Path $repo "skills/$name"
+    $dest = Join-Path $skillsDir $name
+    if (-not (Test-Path -LiteralPath (Join-Path $src 'SKILL.md'))) {
+      Fail "missing $src; run this script from a full copy of https://github.com/toapis/skills"
+    }
+    # Get-Item -Force also finds a broken link, which Test-Path reports inconsistently.
+    $existing = Get-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+    if ($existing) {
+      $sameTree = (Test-Path -LiteralPath $dest -PathType Container) -and ((Get-TreeDigest $src) -eq (Get-TreeDigest $dest))
+      if ($sameTree) {
+        $action = 'unchanged'
+      } elseif ($Force) {
+        $action = 'replace'
+      } else {
+        Fail "$dest already exists and differs from this copy. Rerun with -Force to replace it (the old copy is moved to $backupRoot)."
+      }
     } else {
-      Fail "$dest already exists and differs from this copy. Rerun with -Force to replace it (the old copy is moved to $backupRoot)."
+      $action = 'add'
+    }
+    $skillActions += [pscustomobject]@{ Name = $name; Action = $action; Src = $src; Dest = $dest }
+    Write-Output "skill ${name}: $action ($dest)"
+  }
+
+  # 2. Check the MCP server.
+  $setupArgs = @((Join-Path $repo 'skills/toapis-setup/scripts/toapis-setup.mjs'), 'codex', '--site', $Site)
+  if ($Locale) { $setupArgs += @('--locale', $Locale) }
+  if ($Client -eq 'codex') {
+    $nodeMajor = 0
+    if (Get-Command node -ErrorAction SilentlyContinue) {
+      $nodeMajor = [int](Invoke-Native { & node -p "process.versions.node.split('.')[0]" })
+    }
+    if ($nodeMajor -lt 20) {
+      $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $userHome '.codex' }
+      $block = "[mcp_servers.toapis]`nurl = `"$url`""
+      if ($Locale) { $block += "`nhttp_headers = { `"X-Locale`" = `"$Locale`" }" }
+      Fail "Node.js 20 or newer is needed to edit the Codex config. Install it, or add this section to $(Join-Path $codexHome 'config.toml') yourself:`n$block"
+    }
+    $preview = Invoke-CodexSetup @('--dry-run')
+    switch ($preview.action) {
+      'replaced' {
+        if (-not $Force) { Fail "the Codex config already has a different toapis server ($($preview.config)). Rerun with -Force to replace it (a backup is kept)." }
+        $mcpAction = 'replace'
+      }
+      'added' { $mcpAction = 'add' }
+      default { $mcpAction = 'unchanged' }
     }
   } else {
-    $action = 'add'
-  }
-  $skillActions += [pscustomobject]@{ Name = $name; Action = $action; Src = $src; Dest = $dest }
-  Write-Output "skill ${name}: $action ($dest)"
-}
-
-# 2. Check the MCP server.
-$setupArgs = @((Join-Path $repo 'skills/toapis-setup/scripts/toapis-setup.mjs'), 'codex', '--site', $Site)
-if ($Locale) { $setupArgs += @('--locale', $Locale) }
-if ($Client -eq 'codex') {
-  $nodeMajor = 0
-  if (Get-Command node -ErrorAction SilentlyContinue) {
-    $nodeMajor = [int](Invoke-Native { & node -p "process.versions.node.split('.')[0]" })
-  }
-  if ($nodeMajor -lt 20) {
-    $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $userHome '.codex' }
-    $block = "[mcp_servers.toapis]`nurl = `"$url`""
-    if ($Locale) { $block += "`nhttp_headers = { `"X-Locale`" = `"$Locale`" }" }
-    Fail "Node.js 20 or newer is needed to edit the Codex config. Install it, or add this section to $(Join-Path $codexHome 'config.toml') yourself:`n$block"
-  }
-  $preview = Invoke-CodexSetup @('--dry-run')
-  switch ($preview.action) {
-    'replaced' {
-      if (-not $Force) { Fail "the Codex config already has a different toapis server ($($preview.config)). Rerun with -Force to replace it (a backup is kept)." }
+    if (-not (Get-Command claude -ErrorAction SilentlyContinue)) { Fail 'the Claude Code CLI (claude) was not found. Install or update Claude Code first.' }
+    Invoke-Native { & claude mcp get toapis *> $null }
+    if ($LASTEXITCODE -eq 0) {
+      if (-not $Force) { Fail 'Claude Code already has an MCP server named toapis. Check it with "claude mcp get toapis", then rerun with -Force to replace it.' }
       $mcpAction = 'replace'
+    } else {
+      $mcpAction = 'add'
     }
-    'added' { $mcpAction = 'add' }
-    default { $mcpAction = 'unchanged' }
   }
-} else {
-  if (-not (Get-Command claude -ErrorAction SilentlyContinue)) { Fail 'the Claude Code CLI (claude) was not found. Install or update Claude Code first.' }
-  Invoke-Native { & claude mcp get toapis *> $null }
-  if ($LASTEXITCODE -eq 0) {
-    if (-not $Force) { Fail 'Claude Code already has an MCP server named toapis. Check it with "claude mcp get toapis", then rerun with -Force to replace it.' }
-    $mcpAction = 'replace'
+  Write-Output "mcp server toapis: $mcpAction ($url)"
+
+  if ($DryRun) {
+    Write-Output 'dry run: nothing was changed'
+    return
+  }
+
+  # 3. Apply.
+  try {
+    foreach ($skill in $skillActions) {
+      if ($skill.Action -eq 'replace') {
+        New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
+        Move-Item -LiteralPath $skill.Dest -Destination (Join-Path $backupRoot $skill.Name)
+        Copy-Item -LiteralPath $skill.Src -Destination $skill.Dest -Recurse
+        Write-Output "moved the old $($skill.Name) to $(Join-Path $backupRoot $skill.Name)"
+      } elseif ($skill.Action -eq 'add') {
+        New-Item -ItemType Directory -Force -Path $skillsDir | Out-Null
+        Copy-Item -LiteralPath $skill.Src -Destination $skill.Dest -Recurse
+      }
+    }
+  } catch {
+    Fail "cannot write the skills to ${skillsDir}: $($_.Exception.Message)"
+  }
+
+  if ($Client -eq 'codex') {
+    if ($mcpAction -ne 'unchanged') {
+      $applied = Invoke-CodexSetup @()
+      Write-Output "codex config: $($applied.action) ($($applied.config))"
+      # backup is absent when the config file was created; StrictMode forbids reading a missing property.
+      if ($applied.PSObject.Properties['backup']) { Write-Output "backup: $($applied.backup)" }
+    }
+    Write-Output 'Done. Sign in to ToAPIs:'
+    Write-Output '- Codex CLI: run "codex mcp login toapis".'
+    Write-Output '- Codex desktop app: open Settings > MCP servers, restart the servers if asked, and click Authenticate next to toapis.'
   } else {
-    $mcpAction = 'add'
-  }
-}
-Write-Output "mcp server toapis: $mcpAction ($url)"
-
-if ($DryRun) {
-  Write-Output 'dry run: nothing was changed'
-  exit 0
-}
-
-# 3. Apply.
-try {
-  foreach ($skill in $skillActions) {
-    if ($skill.Action -eq 'replace') {
-      New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
-      Move-Item -LiteralPath $skill.Dest -Destination (Join-Path $backupRoot $skill.Name)
-      Copy-Item -LiteralPath $skill.Src -Destination $skill.Dest -Recurse
-      Write-Output "moved the old $($skill.Name) to $(Join-Path $backupRoot $skill.Name)"
-    } elseif ($skill.Action -eq 'add') {
-      New-Item -ItemType Directory -Force -Path $skillsDir | Out-Null
-      Copy-Item -LiteralPath $skill.Src -Destination $skill.Dest -Recurse
+    if ($mcpAction -eq 'replace') {
+      Invoke-Native { & claude mcp remove toapis --scope user *> $null }
+      if ($LASTEXITCODE -ne 0) { Fail 'cannot remove the existing toapis server; it may not be in the user scope. Remove it yourself, then rerun.' }
     }
+    $addArgs = @('mcp', 'add', '--transport', 'http', '--scope', 'user', 'toapis', $url)
+    if ($Locale) { $addArgs += @('--header', "X-Locale: $Locale") }
+    Invoke-Native { & claude @addArgs }
+    if ($LASTEXITCODE -ne 0) { Fail 'claude mcp add failed' }
+    Write-Output 'Done. Sign in to ToAPIs: start Claude Code, run /mcp, select toapis and authenticate.'
   }
-} catch {
-  Fail "cannot write the skills to ${skillsDir}: $($_.Exception.Message)"
+  Write-Output 'Then start a new session and ask the agent to check your ToAPIs balance.'
 }
 
-if ($Client -eq 'codex') {
-  if ($mcpAction -ne 'unchanged') {
-    $applied = Invoke-CodexSetup @()
-    Write-Output "codex config: $($applied.action) ($($applied.config))"
-    # backup is absent when the config file was created; StrictMode forbids reading a missing property.
-    if ($applied.PSObject.Properties['backup']) { Write-Output "backup: $($applied.backup)" }
+$downloadDir = $null
+try {
+  switch -CaseSensitive ($Client) {
+    'codex' { $skillsDir = Join-Path $userHome '.agents/skills' }
+    'claude-code' { $skillsDir = Join-Path $userHome '.claude/skills' }
+    default { Fail $usage }
   }
-  Write-Output 'Done. Sign in to ToAPIs:'
-  Write-Output '- Codex CLI: run "codex mcp login toapis".'
-  Write-Output '- Codex desktop app: open Settings > MCP servers, restart the servers if asked, and click Authenticate next to toapis.'
-} else {
-  if ($mcpAction -eq 'replace') {
-    Invoke-Native { & claude mcp remove toapis --scope user *> $null }
-    if ($LASTEXITCODE -ne 0) { Fail 'cannot remove the existing toapis server; it may not be in the user scope. Remove it yourself, then rerun.' }
+  switch -CaseSensitive ($Site) {
+    'com' { $url = 'https://api.toapis.com/mcp' }
+    'cn' { $url = 'https://api.toapis.cn/mcp' }
+    default { Fail $usage }
   }
-  $addArgs = @('mcp', 'add', '--transport', 'http', '--scope', 'user', 'toapis', $url)
-  if ($Locale) { $addArgs += @('--header', "X-Locale: $Locale") }
-  Invoke-Native { & claude @addArgs }
-  if ($LASTEXITCODE -ne 0) { Fail 'claude mcp add failed' }
-  Write-Output 'Done. Sign in to ToAPIs: start Claude Code, run /mcp, select toapis and authenticate.'
+  if ($Locale -and $Locale -cnotmatch '^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$') { Fail "invalid locale: $Locale" }
+
+  $stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMdd'T'HHmmss'Z'")
+  $backupRoot = Join-Path $userHome ".toapis-backup/$stamp"
+
+  # 0. Without a full copy of the repository next to this script, download the repository archive.
+  if (-not $repo -or -not (Test-Path -LiteralPath (Join-Path $repo 'skills/toapis-setup/SKILL.md'))) {
+    $archive = if ($env:TOAPIS_SKILLS_ARCHIVE) { $env:TOAPIS_SKILLS_ARCHIVE } else { 'https://github.com/toapis/skills/archive/refs/heads/main.zip' }
+    $downloadDir = Join-Path ([IO.Path]::GetTempPath()) ('toapis-skills-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $downloadDir | Out-Null
+    $zip = Join-Path $downloadDir 'skills.zip'
+    Write-Output "downloading $archive"
+    try {
+      if ($archive -match '^https?://') {
+        # The progress bar of Windows PowerShell 5.1 slows downloads a lot. TLS needs no setting: the session already
+        # fetched this script from GitHub over HTTPS.
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -UseBasicParsing -Uri $archive -OutFile $zip
+      } else {
+        Copy-Item -LiteralPath $archive -Destination $zip
+      }
+      # .NET instead of Expand-Archive, which Windows PowerShell 5.1 loads from a script module (see Get-TreeDigest).
+      Add-Type -AssemblyName System.IO.Compression.FileSystem
+      [IO.Compression.ZipFile]::ExtractToDirectory($zip, (Join-Path $downloadDir 'extracted'))
+    } catch {
+      Fail "cannot download ${archive}: $($_.Exception.Message)"
+    }
+    # The archive holds one top folder, skills-main for this branch on GitHub; mirrors may name it differently.
+    $tops = @(Get-ChildItem -LiteralPath (Join-Path $downloadDir 'extracted') -Directory)
+    if ($tops.Count -ne 1) { Fail "unexpected layout of ${archive}: expected one top folder" }
+    $repo = $tops[0].FullName
+  }
+
+  Install-ToAPIs
+} catch {
+  # Run as a file (powershell -File), print one readable line and exit 1. Pasted as a script block, $PSCommandPath is
+  # empty: rethrow, because exit would close the user's PowerShell window.
+  if ($PSCommandPath) {
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
+  }
+  throw
+} finally {
+  if ($downloadDir) { Remove-Item -LiteralPath $downloadDir -Recurse -Force -ErrorAction SilentlyContinue }
 }
-Write-Output 'Then start a new session and ask the agent to check your ToAPIs balance.'
