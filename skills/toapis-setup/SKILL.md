@@ -39,6 +39,7 @@ Read the JSON result:
 - `action: "replaced"`: an existing ToAPIs entry (for example an older API key setup) will be replaced. Tell the user, get their agreement, then run without `--dry-run`. The script saves a backup next to the config and prints its path.
 - `action: "unchanged"`: already configured; go to sign-in.
 - `error: "unsupported_config"`: ToAPIs is defined in a form the script does not edit. Show the user the ToAPIs part of their config and the target form in `references/clients.md`, and let them edit it; do not rewrite the file another way.
+- `error: "write_failed"`: the config could not be written. Usually your sandbox blocks writes outside the workspace, or on Windows another program (a running Codex, antivirus) holds the file. Do not work around it. Ask the user to allow the write, or to run the same command (without `--dry-run`) in their own terminal; on Windows, closing the Codex app first can help.
 
 ## 3. Sign in
 

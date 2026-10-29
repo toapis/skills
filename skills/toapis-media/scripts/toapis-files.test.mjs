@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { download, parseArgs, upload } from './toapis-files.mjs';
 
@@ -123,4 +125,13 @@ test('upload rejects a malformed locale before sending', async () => {
 
 test('parseArgs accepts --locale', () => {
   assert.deepEqual(parseArgs(['upload', '--url', 'u', '--file', 'f', '--locale', 'ja']), { command: 'upload', options: { url: 'u', file: 'f', locale: 'ja' } });
+});
+
+test('the CLI still answers when started through a symlinked directory', { skip: process.platform === 'win32' && 'symlinks need extra rights on Windows' }, async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'toapis-files-link-'));
+  const link = path.join(dir, 'scripts');
+  await fs.symlink(path.dirname(fileURLToPath(import.meta.url)), link);
+  const result = spawnSync(process.execPath, [path.join(link, 'toapis-files.mjs'), 'bogus'], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.equal(JSON.parse(result.stdout).error, 'invalid_args');
 });

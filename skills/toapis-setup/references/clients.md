@@ -9,7 +9,7 @@ The examples use the international endpoint and `zh` for `X-Locale`. Replace the
 
 ## Codex CLI and Codex desktop app
 
-Both read `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`). The script writes this section:
+Both read `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`; on Windows `%USERPROFILE%\.codex\config.toml`). The script writes this section:
 
 ```toml
 [mcp_servers.toapis]

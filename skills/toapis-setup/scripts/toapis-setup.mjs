@@ -8,10 +8,11 @@
 // Only the standard form [mcp_servers.toapis] (plus its [mcp_servers.toapis.*] subtables) is edited. Any other way of
 // defining the toapis server stops with unsupported_config and leaves the file untouched.
 
+import { realpathSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 const ENDPOINTS = { com: 'https://api.toapis.com/mcp', cn: 'https://api.toapis.cn/mcp' };
 // Same pattern as toapis-files.mjs; the value is written into TOML, so it must stay this strict.
@@ -96,7 +97,10 @@ export async function configureCodex({ site, locale, config = defaultConfigPath(
   const block = ['[mcp_servers.toapis]', `url = "${url}"`];
   if (locale) block.push(`http_headers = { "X-Locale" = "${locale}" }`);
 
-  const lines = original === '' ? [] : original.replace(/\n$/, '').split('\n');
+  // Keep files that use CRLF throughout (common on Windows) in CRLF, so an unchanged config is detected as unchanged.
+  // Files with mixed line endings are handled as LF, as before.
+  const eol = original.includes('\r\n') && !/(^|[^\r])\n/.test(original) ? '\r\n' : '\n';
+  const lines = original === '' ? [] : original.replace(eol === '\r\n' ? /\r\n$/ : /\n$/, '').split(eol);
   const found = findToapisBlock(lines);
   let next;
   let action;
@@ -107,23 +111,34 @@ export async function configureCodex({ site, locale, config = defaultConfigPath(
     next = lines.length > 0 ? [...lines, '', ...block] : block;
     action = 'added';
   }
-  const text = `${next.join('\n')}\n`;
+  const text = `${next.join(eol)}${eol}`;
   if (text === original) return { ok: true, action: 'unchanged', config };
   if (dryRun) return { ok: true, action, config, dry_run: true };
 
   let backup;
-  if (exists) {
-    backup = `${target}.toapis-backup-${utcStamp(now())}`;
-    await fs.copyFile(target, backup);
-  } else {
-    await fs.mkdir(path.dirname(target), { recursive: true });
-  }
-  // Write to a temporary file and rename, so an interrupted write never leaves a half-written config.
-  // Keep the original permissions; a new config may hold tokens later, so it is readable only by the owner.
+  let backupMade = false;
   const temp = `${target}.toapis-tmp-${process.pid}`;
-  await fs.writeFile(temp, text, { mode });
-  await fs.chmod(temp, mode);
-  await fs.rename(temp, target);
+  try {
+    if (exists) {
+      backup = `${target}.toapis-backup-${utcStamp(now())}`;
+      await fs.copyFile(target, backup);
+      backupMade = true;
+    } else {
+      await fs.mkdir(path.dirname(target), { recursive: true });
+    }
+    // Write to a temporary file and rename, so an interrupted write never leaves a half-written config.
+    // Keep the original permissions; a new config may hold tokens later, so it is readable only by the owner.
+    await fs.writeFile(temp, text, { mode });
+    await fs.chmod(temp, mode);
+    await fs.rename(temp, target);
+  } catch (error) {
+    // The config itself is untouched (the rename is atomic), so the backup of this attempt is not needed.
+    await fs.rm(temp, { force: true }).catch(() => {});
+    if (backupMade) await fs.rm(backup, { force: true }).catch(() => {});
+    // Typical causes: the agent's sandbox blocks writes outside its workspace, or another program (a running Codex,
+    // antivirus) holds the file on Windows.
+    throw new SetupError('write_failed', `cannot write ${target}: ${error.code || error.message}`);
+  }
   return { ok: true, action, backup, config };
 }
 
@@ -152,7 +167,17 @@ async function main(argv) {
   throw new SetupError('invalid_args', 'usage: codex --site com|cn [--locale <code>] [--config <path>] [--dry-run]');
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Compare real paths: when started through a symlink (an installer may link skill directories) or, on Windows, a short
+// 8.3 path, argv[1] differs from import.meta.url although this file is the entry point.
+function startedAsScript() {
+  try {
+    return realpathSync.native(process.argv[1]) === realpathSync.native(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (startedAsScript()) {
   main(process.argv.slice(2)).then(
     (result) => process.stdout.write(`${JSON.stringify(result)}\n`),
     (error) => {
