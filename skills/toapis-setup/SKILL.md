@@ -1,7 +1,9 @@
 ---
 name: toapis-setup
 description: Connect Codex (CLI or desktop app), Claude Code or the Claude desktop app to ToAPIs with browser sign-in, and answer questions about the ToAPIs account behind that connection - balance, recent tasks, why a task failed, and spending such as today's cost. Use when the user wants to set up, fix, check or remove the ToAPIs connection, or asks about their ToAPIs credits, tasks or usage.
-version: 0.1.0
+license: Apache-2.0
+metadata:
+  version: "0.1.0"
 ---
 
 # ToAPIs Setup

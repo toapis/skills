@@ -7,8 +7,6 @@ ToAPIs MCP endpoints:
 
 The examples use the international endpoint and `zh` for `X-Locale`. Replace them with the user's site and language.
 
-> Status: these steps are pending client acceptance testing and are not yet marked verified.
-
 ## Codex CLI and Codex desktop app
 
 Both read `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`). The script writes this section:

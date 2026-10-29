@@ -11,8 +11,6 @@ Create a dedicated API key for agents in the ToAPIs console and set a quota and 
 
 Set the `X-Locale` header to the language the user chats in, so error messages from the server match the conversation. Supported values: `en`, `zh`, `zh-TW`, `ja`, `ko`, `ru`. For any other language, leave the header out; messages then follow the account language setting in the console. The examples below use `zh`.
 
-> Status: the commands below are pending client acceptance testing and are not yet marked verified.
-
 ## Codex
 
 Add to `~/.codex/config.toml`:
@@ -31,6 +29,8 @@ The CLI reads `TOAPIS_API_KEY` from your shell. The Codex desktop app on macOS r
 ```bash
 claude mcp add --transport http toapis https://api.toapis.com/mcp --header "Authorization: Bearer ${TOAPIS_API_KEY}" --header "X-Locale: zh"
 ```
+
+The shell expands `${TOAPIS_API_KEY}` when you run this command, so Claude Code stores the key in its configuration file (`~/.claude.json`).
 
 ## Check the connection (read only)
 
