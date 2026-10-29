@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { configureCodex, parseArgs } from './toapis-setup.mjs';
 
 const fixedNow = () => new Date('2026-10-28T08:09:10Z');
+// Windows has no POSIX file modes, and root ignores them.
+const noPosixModes = process.platform === 'win32' || process.getuid?.() === 0;
 
 async function tempConfig(content) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'toapis-setup-'));
@@ -92,7 +96,7 @@ test('parses CLI arguments', () => {
   assert.throws(() => parseArgs(['codex', '--bogus']), { code: 'invalid_args' });
 });
 
-test('keeps the file mode and writes through a symlinked config', async () => {
+test('keeps the file mode and writes through a symlinked config', { skip: noPosixModes }, async () => {
   const { dir, file } = await tempConfig(other);
   await fs.chmod(file, 0o600);
   const link = path.join(dir, 'link.toml');
@@ -103,8 +107,57 @@ test('keeps the file mode and writes through a symlinked config', async () => {
   assert.equal((await fs.stat(file)).mode & 0o777, 0o600);
 });
 
-test('creates a missing config readable only by the owner', async () => {
+test('creates a missing config readable only by the owner', { skip: noPosixModes }, async () => {
   const { file } = await tempConfig();
   await configureCodex({ site: 'com', config: file, now: fixedNow });
   assert.equal((await fs.stat(file)).mode & 0o777, 0o600);
+});
+
+test('keeps CRLF line endings and reports unchanged on the next run', async () => {
+  const crlf = other.replaceAll('\n', '\r\n');
+  const { file } = await tempConfig(crlf);
+  assert.equal((await configureCodex({ site: 'com', locale: 'zh', config: file, now: fixedNow })).action, 'added');
+  const text = await fs.readFile(file, 'utf8');
+  assert.ok(text.startsWith(crlf));
+  assert.ok(text.endsWith('[mcp_servers.toapis]\r\nurl = "https://api.toapis.com/mcp"\r\nhttp_headers = { "X-Locale" = "zh" }\r\n'));
+  assert.ok(!/[^\r]\n/.test(text), 'every line ends with CRLF');
+  assert.equal((await configureCodex({ site: 'com', locale: 'zh', config: file, now: fixedNow })).action, 'unchanged');
+});
+
+test('reports write_failed and leaves no temporary file when the config cannot be written', { skip: noPosixModes }, async () => {
+  const { dir, file } = await tempConfig(other);
+  await fs.chmod(dir, 0o500);
+  try {
+    await assert.rejects(configureCodex({ site: 'com', config: file, now: fixedNow }), { code: 'write_failed' });
+  } finally {
+    await fs.chmod(dir, 0o700);
+  }
+  assert.equal(await fs.readFile(file, 'utf8'), other);
+  assert.deepEqual(await fs.readdir(dir), ['config.toml']);
+});
+
+test('treats a config with mixed line endings as before: LF output, unchanged when already set', async () => {
+  const content = `model = "x"\r\n\n[mcp_servers.toapis]\nurl = "https://api.toapis.com/mcp"\n`;
+  const { file } = await tempConfig(content);
+  assert.equal((await configureCodex({ site: 'com', config: file, now: fixedNow })).action, 'unchanged');
+  assert.equal(await fs.readFile(file, 'utf8'), content);
+});
+
+test('removes the backup it made when the write fails afterwards', async () => {
+  const { dir, file } = await tempConfig(other);
+  // A directory at the temporary path makes the write fail after the backup was copied.
+  const blocker = `${file}.toapis-tmp-${process.pid}`;
+  await fs.mkdir(blocker);
+  await assert.rejects(configureCodex({ site: 'com', config: file, now: fixedNow }), { code: 'write_failed' });
+  assert.equal(await fs.readFile(file, 'utf8'), other);
+  assert.deepEqual((await fs.readdir(dir)).sort(), ['config.toml', path.basename(blocker)].sort());
+});
+
+test('the CLI still answers when started through a symlinked directory', { skip: process.platform === 'win32' && 'symlinks need extra rights on Windows' }, async () => {
+  const { dir, file } = await tempConfig();
+  const link = path.join(dir, 'scripts');
+  await fs.symlink(path.dirname(fileURLToPath(import.meta.url)), link);
+  const result = spawnSync(process.execPath, [path.join(link, 'toapis-setup.mjs'), 'codex', '--site', 'com', '--config', file, '--dry-run'], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).action, 'added');
 });

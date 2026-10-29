@@ -8,12 +8,12 @@
 // Prints one JSON line to stdout: {"ok":true,...} or {"ok":false,"error":"<code>","message":"..."}.
 
 import { randomBytes } from 'node:crypto';
-import { createWriteStream, openAsBlob } from 'node:fs';
+import { createWriteStream, openAsBlob, realpathSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 const UPLOAD_HOSTS = ['api.toapis.com', 'toapis.com', 'api.toapis.cn', 'toapis.cn'];
 const MAX_REDIRECTS = 5;
@@ -188,7 +188,17 @@ async function main(argv) {
   throw new FilesError('invalid_args', 'usage: upload --url <url> --file <path> [--locale <code>] | download --url <url> --out <path> [--overwrite] [--root <dir>]');
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Compare real paths: when started through a symlink (an installer may link skill directories) or, on Windows, a short
+// 8.3 path, argv[1] differs from import.meta.url although this file is the entry point.
+function startedAsScript() {
+  try {
+    return realpathSync.native(process.argv[1]) === realpathSync.native(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (startedAsScript()) {
   main(process.argv.slice(2)).then(
     (result) => process.stdout.write(`${JSON.stringify(result)}\n`),
     (error) => {
