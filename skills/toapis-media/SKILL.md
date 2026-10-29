@@ -1,7 +1,9 @@
 ---
 name: toapis-media
 description: Generate or edit images and videos with ToAPIs models through the ToAPIs MCP server. Use when the user asks to create, edit or animate images or videos with ToAPIs, to find a suitable ToAPIs image or video model or its price, to check ToAPIs credits, or to follow up on a ToAPIs generation or task.
-version: 0.1.0
+license: Apache-2.0
+metadata:
+  version: "0.1.0"
 ---
 
 # ToAPIs Media
