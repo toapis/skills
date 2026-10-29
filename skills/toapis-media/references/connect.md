@@ -13,7 +13,11 @@ Set the `X-Locale` header to the language the user chats in, so error messages f
 
 ## Codex
 
-Add to `~/.codex/config.toml`:
+```bash
+codex mcp add toapis --url https://api.toapis.com/mcp --bearer-token-env-var TOAPIS_API_KEY
+```
+
+To also send `X-Locale`, write the section in `~/.codex/config.toml` by hand instead:
 
 ```toml
 [mcp_servers.toapis]
@@ -38,7 +42,7 @@ Ask the agent: "List 5 ToAPIs image models and show the parameter docs of one of
 
 ## Remove
 
-- Codex: delete the `[mcp_servers.toapis]` section.
+- Codex: `codex mcp remove toapis`.
 - Claude Code: `claude mcp remove toapis`.
 
 Then delete or disable the dedicated API key in the console.
