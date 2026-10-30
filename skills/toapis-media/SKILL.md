@@ -3,7 +3,7 @@ name: toapis-media
 description: Generate or edit images and videos with ToAPIs models through the ToAPIs MCP server. Use when the user asks to create, edit or animate images or videos with ToAPIs, to find a suitable ToAPIs image or video model or its price, to check ToAPIs credits, or to follow up on a ToAPIs generation or task.
 license: Apache-2.0
 metadata:
-  version: "0.1.1"
+  version: "0.2.0"
 ---
 
 # ToAPIs Media
@@ -50,13 +50,17 @@ All business actions go through the MCP tools. The bundled script `scripts/toapi
    - If the generation finished with `state: failed` and the user wants to try again, use a new `client_request_id`.
    - A result with `error` but no `state` means the tool call itself failed and did not produce a generation result. Follow `error.code`: fix the arguments for invalid input; for `client_request_id_conflict` use a new value; when `retry_after_seconds` is set, wait and retry with the same `client_request_id`.
 7. **Follow up.** While `state` is `running`, wait `poll_after_seconds` and call `get_generation`. Keep waiting up to about 5 minutes for images and 15 minutes for videos, then report the `client_request_id` and `task_id` so the user can check later. If `state` is `unknown`, tell the user the result could not be confirmed and suggest checking the console task list; do not resubmit. If `get_generation` returns `generation_not_found`, the record expired (after 24 hours) or the ID is wrong; tell the user and do not resubmit on your own.
-8. **Deliver.** Give every result URL as a plain link. You may also embed images, but never only embed them: some clients, such as the Codex desktop app on Windows, do not display remote Markdown images. If the user wants the files saved, download only the URLs returned for this generation:
+8. **Deliver.** Download every result into the current directory first, then show the local copy. Many clients do not display remote Markdown images (for example the Codex desktop app), but they can show a local file:
 
    ```bash
-   node scripts/toapis-files.mjs download --url "<result url>" --out "<path>"
+   node scripts/toapis-files.mjs download --url "<result url>" --out "toapis-output/<task_id>-<n>.<ext>"
    ```
 
-   The path must be inside the current directory, or pass `--root "<dir>"` for a directory the user named. If the file exists, ask before adding `--overwrite`. If a download fails, keep the URL and `task_id` and retry only the download, never the generation. If `delivery_error` is set, the generation succeeded but its files could not be delivered: report it and do not resubmit.
+   - Download only the URLs returned for this generation. Name each file after `task_id` (or `client_request_id` when there is none), the result number and the extension in the URL, so names are unique and contain no spaces. Pass `--root "<dir>"` only for a directory the user named. If the file exists, ask before adding `--overwrite`.
+   - The command prints the absolute `path`. Show images with that absolute path written with forward slashes and without angle brackets, for example `![result](C:/Users/me/project/toapis-output/task-1.jpg)` or `![result](/Users/me/project/toapis-output/task-1.jpg)`. Relative paths, backslashes and `file://` URLs often do not display. For videos, give the local path.
+   - Always give every result URL as a plain link as well, in case the local preview does not show (for example when the path contains spaces).
+   - If you cannot run commands or write files (for example in the Claude or ChatGPT apps), give the URL as a plain link and embed the image from its URL.
+   - If a download fails, keep the URL and `task_id` and retry only the download, never the generation. If `delivery_error` is set, the generation succeeded but its files could not be delivered: report it and do not resubmit.
 9. **Report.** Model, `task_id` (if any), the delivered files or links, and the cost when `billing` or `get_balance` confirms it.
 
 ## Without Node 20
